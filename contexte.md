@@ -85,9 +85,3 @@ Tes réponses doivent m'aider à construire ces 3 fichiers spécifiques pour le 
 * Explique les choix pour la défense orale (ex: "J'ai fait une auto-jointure pour calculer la distance parcourue entre deux messages du même avion").
 
 ---
-
-### Ce que ce document t'apporte :
-
-1. **La Checklist automatique :** L'IA sait maintenant qu'elle *doit* te faire faire une requête Pandas/Seaborn et une jointure, sinon tu perds des points.
-2. **La Structure des Notebooks :** Elle ne va pas te donner un code en vrac, mais structuré selon les fichiers que tu dois rendre.
-3. **L'Argumentaire :** Elle sait que tu as une soutenance et te donnera les arguments ("Pourquoi Delta Lake ?") dans ses explications.
