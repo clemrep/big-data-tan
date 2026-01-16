@@ -1,0 +1,103 @@
+version: '3.1'
+
+services:
+  spark:
+    image: grosinosky/spark:3.5.3
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - SPARK_USER=spark
+    ports:
+      - '8080:8080'
+      - '7077:7077'
+      - '18888:8888'
+
+  spark-worker:
+    image: grosinosky/spark:3.5.3
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark:7077
+      - SPARK_WORKER_MEMORY=1G # can be changed
+      - SPARK_WORKER_CORES=1 # can be changed
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - SPARK_USER=spark
+    ports:
+      - '8081:8081'
+
+  notebook:
+    image: grosinosky/bigdata_fila3_jupyter:python3.12-spark3.5.3_delta
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jupyter
+    ports: 
+    - "8888:8888"
+    - "4040:4040"
+    environment:
+      JUPYTER_ENABLE_LAB: yes
+    command: start-notebook.py --NotebookApp.token=''
+  zookeeper1:
+    image: grosinosky/zookeeper:latest
+    environment:
+      ALLOW_ANONYMOUS_LOGIN: "yes"
+  kafka1:
+    image: grosinosky/kafka:3.0.2
+    depends_on:
+      - zookeeper1
+    environment: # https://rmoff.net/2018/08/02/kafka-listeners-explained/
+      KAFKA_BROKER_ID: 1
+      KAFKA_CFG_ZOOKEEPER_CONNECT: zookeeper1:2181
+      #KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://:9092,PROXY://0.0.0.0:9093,OUTSIDE://0.0.0.0:9095,PROXY_PASSTHROUGH://0.0.0.0:9096
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://:9092,PROXY://envoy1:9093,OUTSIDE://localhost:9095,PROXY_PASSTHROUGH://envoy1:9096
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,PROXY:PLAINTEXT,OUTSIDE:PLAINTEXT,PROXY_PASSTHROUGH:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+      KAFKA_NUM_PARTITIONS: ${NUM_PARTITIONS:-2}
+  kafka-ui:
+    image: grosinosky/kafka-ui
+    container_name: kafka-ui
+    ports:
+      - "8082:8080"
+    restart: always
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=kafka1
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka1:9092
+      - KAFKA_CLUSTERS_0_ZOOKEEPER=zookeeper1:2181 
+  garage:
+    image: grosinosky/garage:v2.1.0
+    container_name: garage
+    ports:
+      - "3900:3900"  # S3 API
+      - "3901:3901"  # RPC API
+      - "3902:3902"  # s3 web
+      - "3903:3903"  # admin API
+    environment:
+      # Garage configuration
+      RUST_LOG: garage=info
+    volumes:
+      - garage-data:/var/lib/garage/data
+      - garage-meta:/var/lib/garage/meta
+    restart: unless-stopped
+
+  webui:
+    image: khairul169/garage-webui:1.1.0
+    container_name: garage-webui
+    restart: unless-stopped
+    ports:
+      - 3909:3909
+    environment:
+      API_BASE_URL: "http://garage:3903"
+      API_ADMIN_KEY: "changeme1234567890"
+      S3_ENDPOINT_URL: "http://garage:3900"
+volumes:
+  garage-meta:
+    external: true  
+  garage-data:
+    external: true
