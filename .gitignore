@@ -1,0 +1,17 @@
+.env
+.DS_Store
+__pycache__/
+.ipynb_checkpoints/
+.venv/
+.vscode/
+.cursor/
+.idea/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
