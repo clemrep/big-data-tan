@@ -20,8 +20,8 @@ services:
     environment:
       - SPARK_MODE=worker
       - SPARK_MASTER_URL=spark://spark:7077
-      - SPARK_WORKER_MEMORY=1G # can be changed
-      - SPARK_WORKER_CORES=1 # can be changed
+      - SPARK_WORKER_MEMORY=3G
+      - SPARK_WORKER_CORES=3
       - SPARK_RPC_AUTHENTICATION_ENABLED=no
       - SPARK_RPC_ENCRYPTION_ENABLED=no
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
@@ -39,6 +39,7 @@ services:
     ports: 
     - "8888:8888"
     - "4040:4040"
+    - "8501:8501"
     environment:
       JUPYTER_ENABLE_LAB: yes
     command: start-notebook.py --NotebookApp.token=''
