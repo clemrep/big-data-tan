@@ -1,290 +1,176 @@
-#!/usr/bin/env python3
-"""
-Streamlit Dashboard - Zero Spark Edition
-Reads Delta tables from S3/MinIO using deltalake library (live updates).
-"""
-
-import os
-import logging
-import time
-from datetime import datetime
-from typing import Optional, Tuple
-import hashlib
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 from deltalake import DeltaTable
+import os
+import time
+from datetime import datetime
 from dotenv import load_dotenv
-import pyarrow  # Explicit import for Snappy codec support
 
-# --- Configuration ---
+# --- Configuration Page ---
+st.set_page_config(page_title="SkyStream Debug", layout="wide", page_icon="🛠️")
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# Variables d'environnement
-S3_ENDPOINT = os.getenv("GARAGE_ENDPOINT", "http://garage:3900")
-BUCKET_NAME = os.getenv("BUCKET_NAME", "datalake")
-ACCESS_KEY = os.getenv("ACCESS_KEY", "minioadmin") 
-SECRET_KEY = os.getenv("SECRET_KEY", "minioadmin")
-
-GOLD_TRAFFIC_PATH = f"s3a://{BUCKET_NAME}/gold/traffic_by_country"
-GOLD_METRICS_PATH = f"s3a://{BUCKET_NAME}/gold/metrics_by_category"
-
-# Configuration pour Deltalake avec Garage
+# --- Config S3 ---
 storage_options = {
-    "AWS_ENDPOINT_URL": S3_ENDPOINT,
-    "AWS_ACCESS_KEY_ID": ACCESS_KEY,
-    "AWS_SECRET_ACCESS_KEY": SECRET_KEY,
-    "AWS_REGION": "us-east-1",
+    "AWS_ENDPOINT_URL": os.getenv("GARAGE_ENDPOINT", "http://garage:3900"),
+    "AWS_ACCESS_KEY_ID": os.getenv("ACCESS_KEY", "minioadmin"),
+    "AWS_SECRET_ACCESS_KEY": os.getenv("SECRET_KEY", "minioadmin"),
+    "AWS_REGION": "garage",
     "AWS_S3_ALLOW_UNSAFE_SSL": "true",
     "AWS_ALLOW_HTTP": "true",
 }
 
-# --- Session State pour détecteur de changement ---
-if "last_traffic_hash" not in st.session_state:
-    st.session_state.last_traffic_hash = None
-if "last_metrics_hash" not in st.session_state:
-    st.session_state.last_metrics_hash = None
-if "last_update_time" not in st.session_state:
-    st.session_state.last_update_time = None
+BUCKET = os.getenv("BUCKET_NAME", "datalake")
+PATH_TRAFFIC = f"s3://{BUCKET}/gold/traffic_by_country"
+PATH_METRICS = f"s3://{BUCKET}/gold/metrics_by_category"
 
-# --- Fonctions de chargement ---
+# --- Chargement Robuste ---
 
-def compute_data_hash(df: Optional[pd.DataFrame]) -> Optional[str]:
-    """Compute hash of dataframe to detect changes."""
-    if df is None or df.empty:
-        return None
-    return hashlib.md5(pd.util.hash_pandas_object(df, index=True).values).hexdigest()
-
-def load_delta_table(path: str, timeout: int = 10) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
+def clean_timestamp(df, col_name):
     """
-    Load Delta table from S3/Garage with error handling and hash.
-    Returns: (dataframe, hash_value)
+    Tente de nettoyer le timestamp de toutes les manières possibles.
+    Gère: Struct (Dict), String, Datetime déjà parsé.
     """
+    if df.empty or col_name not in df.columns:
+        return df
+
+    def parse_flexible(val):
+        # Cas 1: C'est un dict/struct Spark {'start':..., 'end':...}
+        if isinstance(val, dict) and 'end' in val:
+            return val['end']
+        # Cas 2: C'est une Row object (si PyArrow convertit mal)
+        if hasattr(val, 'asDict'):
+            return val.asDict().get('end')
+        # Cas 3: C'est déjà une valeur simple
+        return val
+
     try:
-        logger.info(f"Loading Delta table from: {path}")
+        # 1. Extraction
+        df['ts_clean'] = df[col_name].apply(parse_flexible)
+        # 2. Conversion forcée en datetime UTC
+        df['ts_clean'] = pd.to_datetime(df['ts_clean'], utc=True, errors='coerce')
+        # 3. On ne garde que les dates valides
+        return df.dropna(subset=['ts_clean'])
+    except Exception as e:
+        st.error(f"Erreur parsing date sur {col_name}: {e}")
+        return df
+
+def load_data_safe(path, name, time_col):
+    try:
+        # Force le rechargement depuis S3
         dt = DeltaTable(path, storage_options=storage_options)
-        
-        # Get table metadata
-        logger.info(f"Delta table loaded. Version: {dt.version()}, Files: {len(dt.files())}")
-        
-        # Convert to pandas with pyarrow backend
         df = dt.to_pandas()
         
-        logger.info(f"Data loaded: {len(df)} rows, {len(df.columns)} columns")
-        logger.info(f"Columns: {df.columns.tolist()}")
-        logger.info(f"First row dtypes: {df.dtypes.to_dict()}")
+        if df.empty:
+            return None, f"⚠️ Table {name} vide sur S3."
+            
+        # Nettoyage Temporel
+        df = clean_timestamp(df, time_col)
         
-        data_hash = compute_data_hash(df)
-        return df if not df.empty else None, data_hash
-    except FileNotFoundError:
-        logger.warning(f"Delta table not found: {path}")
-        return None, None
+        if df.empty or 'ts_clean' not in df.columns:
+            return None, f"⚠️ Table {name} chargée mais parsing date échoué."
+            
+        # Tri par temps décroissant
+        df = df.sort_values('ts_clean', ascending=True)
+        return df, "OK"
+        
     except Exception as e:
-        logger.error(f"Error loading Delta table {path}: {str(e)}", exc_info=True)
-        return None, None
-        return None, None
+        return None, f"❌ Erreur connexion {name}: {str(e)}"
 
-# --- Interface Streamlit ---
+# --- Main App ---
 
-st.set_page_config(page_title="Flight Dashboard", page_icon="🌐", layout="wide")
-st.title("OpenSky Real-time Flight Dashboard")
-
-# CSS Dark Mode
-st.markdown("""
-<style>
-    .stApp { background-color: #0e1117; }
-    div[data-testid="stMetricValue"] { font-size: 2.5rem; color: #ff9900; }
-</style>
-""", unsafe_allow_html=True)
-
-# --- Sidebar Configuration ---
-with st.sidebar:
-    st.header("Configuration")
-    refresh_rate = st.slider("Refresh interval (sec)", 5, 300, 15, step=5)
+def main():
+    st.title("🛠️ SkyStream Dashboard (Mode Correction)")
     
-    status_cols = st.columns(3)
-    with status_cols[0]:
-        st.metric("DataLake", "OK")
-    with status_cols[1]:
-        st.metric("Mode", "Live")
-    with status_cols[2]:
-        st.metric("Storage", "Garage")
-    
-    with st.expander("Debug Info"):
-        st.code(f"S3: {S3_ENDPOINT}\nBucket: {BUCKET_NAME}\nAccess: {ACCESS_KEY[:10]}...", language="text")
+    # Sidebar Paramètres
+    with st.sidebar:
+        refresh = st.slider("Refresh (sec)", 5, 60, 10)
+        st.divider()
+        st.write("Debug Infos:")
+        if st.button("Vider Cache Streamlit"):
+            st.cache_data.clear()
+            st.rerun()
 
-st.divider()
+    # 1. Chargement
+    # Note: Dans Notebook 02, Traffic utilise 'time_window', Metrics utilise 'window'
+    df_metrics, status_met = load_data_safe(PATH_METRICS, "Metrics", "window")
+    df_traffic, status_traf = load_data_safe(PATH_TRAFFIC, "Traffic", "time_window")
 
-# --- Chargement des données en direct ---
-placeholder_status = st.empty()
-placeholder_content = st.container()
+    # --- SECTION DEBUG (Indispensable pour voir le problème) ---
+    with st.expander("🔍 Inspecter les Données Brutes (Cliquez ici si rien ne s'affiche)", expanded=True):
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            st.write(f"**Metrics:** {status_met}")
+            if df_metrics is not None:
+                st.dataframe(df_metrics.tail(5), use_container_width=True)
+        with col_d2:
+            st.write(f"**Traffic:** {status_traf}")
+            if df_traffic is not None:
+                st.dataframe(df_traffic.tail(5), use_container_width=True)
 
-with placeholder_status:
-    with st.spinner("Loading data..."):
-        df_traffic, hash_traffic = load_delta_table(GOLD_TRAFFIC_PATH)
-        df_metrics, hash_metrics = load_delta_table(GOLD_METRICS_PATH)
+    # 2. Affichage des KPIs
+    if df_metrics is not None and not df_metrics.empty:
+        # On prend la toute dernière fenêtre temporelle disponible
+        last_ts = df_metrics['ts_clean'].max()
+        df_now = df_metrics[df_metrics['ts_clean'] == last_ts]
         
-        # Detect change
-        data_changed = (hash_traffic != st.session_state.last_traffic_hash or 
-                       hash_metrics != st.session_state.last_metrics_hash)
+        st.markdown(f"### ⏱️ Données Live : {last_ts.strftime('%H:%M:%S UTC')}")
         
-        if data_changed:
-            st.session_state.last_traffic_hash = hash_traffic
-            st.session_state.last_metrics_hash = hash_metrics
-            st.session_state.last_update_time = datetime.now()
-
-# --- Affichage du contenu ---
-with placeholder_content:
-    if df_traffic is not None and not df_traffic.empty:
-        # Récupération de la dernière fenêtre temporelle (extract start time from struct)
-        # Gold tables have 'time_window' struct with 'start' and 'end' fields
-        if "time_window" in df_traffic.columns:
-            # Extract start timestamp from window struct
-            df_traffic["window_start"] = pd.to_datetime(df_traffic["time_window"].apply(lambda x: x['start'] if isinstance(x, dict) else x))
-            latest_window = df_traffic["window_start"].max()
-            df_latest_traffic = df_traffic[df_traffic["window_start"] == latest_window].copy()
-        else:
-            # Fallback if column structure is different
-            df_latest_traffic = df_traffic.copy()
+        kpi1, kpi2, kpi3 = st.columns(3)
         
-        # KPIs
-        total_flights = int(df_latest_traffic["aircraft_count"].sum())
+        # Calculs sécurisés
+        total_planes = df_now['aircraft_count'].sum() if 'aircraft_count' in df_now.columns else 0
         
-        if not df_latest_traffic.empty:
-            top_country_row = df_latest_traffic.sort_values("aircraft_count", ascending=False).iloc[0]
-            top_country = f"{top_country_row['origin_country']} ({int(top_country_row['aircraft_count'])})"
-        else:
-            top_country = "-"
+        # Gestion moyenne pondérée safe
+        avg_alt = 0
+        if 'avg_altitude_m' in df_now.columns and total_planes > 0:
+            avg_alt = (df_now['avg_altitude_m'] * df_now['aircraft_count']).sum() / total_planes
 
-        # Vitesse moyenne
-        avg_speed = "N/A"
-        if df_metrics is not None and not df_metrics.empty:
-            # Debug: Show actual columns
-            logger.info(f"Metrics columns: {df_metrics.columns.tolist()}")
-            logger.info(f"Metrics sample: {df_metrics.head(2).to_dict()}")
-            
-            # Extract window start for metrics too
-            try:
-                if "time_window" in df_metrics.columns:
-                    df_metrics["window_start"] = df_metrics["time_window"].apply(
-                        lambda x: pd.to_datetime(x['start']) if isinstance(x, dict) and 'start' in x else pd.NaT
-                    )
-                    df_latest_metrics = df_metrics[df_metrics["window_start"] == latest_window]
-                elif "window" in df_metrics.columns:
-                    df_metrics["window_start"] = df_metrics["window"].apply(
-                        lambda x: pd.to_datetime(x['start']) if isinstance(x, dict) and 'start' in x else pd.NaT
-                    )
-                    df_latest_metrics = df_metrics[df_metrics["window_start"] == latest_window]
-                else:
-                    logger.warning("No window column in metrics")
-                    df_latest_metrics = df_metrics.copy()
-            except Exception as e:
-                logger.error(f"Error processing metrics window: {e}")
-                df_latest_metrics = df_metrics.copy()
-                
-            if not df_latest_metrics.empty and "avg_velocity_kmh" in df_latest_metrics.columns:
-                avg_speed = f"{int(df_latest_metrics['avg_velocity_kmh'].mean())} km/h"
+        kpi1.metric("Avions détectés", int(total_planes))
+        kpi2.metric("Altitude Moyenne", f"{int(avg_alt)} m")
+        kpi3.metric("Fenêtre active", "5 min")
+        
+        st.divider()
 
-        # KPIs
-        c1, c2, c3, c4 = st.columns(4)
+        # 3. Graphiques
+        c1, c2 = st.columns(2)
+        
         with c1:
-            try:
-                window_display = pd.Timestamp(latest_window).strftime('%H:%M:%S') if pd.notna(latest_window) else "N/A"
-            except:
-                window_display = "N/A"
-            st.metric("Window", window_display)
-        with c2:
-            st.metric("Aircraft", f"{total_flights:,}")
-        with c3:
-            st.metric("Top Country", top_country)
-        with c4:
-            st.metric("Avg Speed", avg_speed)
-        
-        st.divider()
-        
-        # --- Graphiques en Live ---
-        col_left, col_right = st.columns(2)
-        
-        with col_left:
-            st.subheader("Top 15 Countries")
-            df_top15 = df_latest_traffic.nlargest(15, "aircraft_count")
-            
-            if not df_top15.empty:
-                fig = px.bar(
-                    df_top15, x="aircraft_count", y="origin_country", orientation='h',
-                    template="plotly_dark", color="aircraft_count", 
-                    color_continuous_scale="Oranges", title=""
-                )
-                fig.update_layout(showlegend=False, height=400, 
-                                margin=dict(l=0, r=0, t=10, b=0),
-                                xaxis_title="Aircraft Count", yaxis_title="")
-                st.plotly_chart(fig, use_container_width=True, key="bar_chart")
-        
-        with col_right:
-            st.subheader("Flight Metrics")
-            if df_metrics is not None and not df_metrics.empty:
-                # Use already extracted window_start
-                if "window_start" in df_metrics.columns:
-                    df_m = df_metrics[df_metrics["window_start"] == latest_window]
-                else:
-                    df_m = df_metrics.copy()
-                    
-                if not df_m.empty and "avg_velocity_kmh" in df_m.columns and "avg_altitude_m" in df_m.columns:
-                    fig2 = px.scatter(
-                        df_m, x="avg_velocity_kmh", y="avg_altitude_m",
-                        size="aircraft_count", color="category", 
-                        template="plotly_dark",
-                        labels={"avg_velocity_kmh": "Speed (km/h)", "avg_altitude_m": "Altitude (m)"}
-                    )
-                    fig2.update_layout(height=400, showlegend=True,
-                                    margin=dict(l=0, r=0, t=10, b=0))
-                    st.plotly_chart(fig2, use_container_width=True, key="scatter_chart")
-                else:
-                    st.info("Metrics not available for this window")
+            st.subheader("Phases de Vol")
+            if 'flight_phase' in df_now.columns:
+                fig = px.pie(df_now, values='aircraft_count', names='flight_phase', hole=0.4)
+                st.plotly_chart(fig, use_container_width=True)
             else:
-                st.info("Metrics table not yet populated")
+                st.warning("Colonne 'flight_phase' manquante")
 
-        # Status footer
-        update_time = st.session_state.last_update_time or datetime.now()
-        st.divider()
-        col_status1, col_status2, col_status3 = st.columns(3)
-        with col_status1:
-            st.caption(f"Last update: {update_time.strftime('%H:%M:%S')}")
-        with col_status2:
-            st.caption(f"{len(df_latest_traffic)} countries tracked")
-        with col_status3:
-            st.caption(f"Refresh: {refresh_rate}s")
+        with c2:
+            st.subheader("Trafic par Pays")
+            if df_traffic is not None and not df_traffic.empty:
+                last_ts_traf = df_traffic['ts_clean'].max()
+                df_traf_now = df_traffic[df_traffic['ts_clean'] == last_ts_traf]
+                
+                # Tri explicite pour forcer l'actualisation visuelle
+                df_traf_view = df_traf_now.groupby('origin_country')['aircraft_count'].sum().reset_index()
+                df_traf_view = df_traf_view.sort_values('aircraft_count', ascending=True).tail(10)
+                
+                fig2 = px.bar(df_traf_view, x='aircraft_count', y='origin_country', orientation='h')
+                st.plotly_chart(fig2, use_container_width=True)
+            else:
+                st.warning("Pas de données Trafic")
+
+        # 4. Timeline
+        st.subheader("Historique récent")
+        # On prend les 60 dernières minutes max
+        df_hist = df_metrics.tail(100) 
+        fig_line = px.area(df_hist, x='ts_clean', y='aircraft_count', color='flight_phase')
+        st.plotly_chart(fig_line, use_container_width=True)
 
     else:
-        # Waiting screen
-        st.warning("Waiting for data in Data Lake...")
-        st.info(f"""
-        **Connection Status:**
-        - **Endpoint:** `{S3_ENDPOINT}`
-        - **Bucket:** `{BUCKET_NAME}`
-        - **Traffic Path:** `{GOLD_TRAFFIC_PATH}`
-        - **Metrics Path:** `{GOLD_METRICS_PATH}`
-        
-        **Troubleshooting:**
-        1. Ensure `docker compose up -d --build` is running
-        2. Start 02_Unified_Pipeline.ipynb to populate Gold tables
-        3. Check that Spark is writing to the S3 paths above
-        """)
-        
-        # Mini debug
-        with st.expander("Debug Details"):
-            st.code(f"""
-Traffic loaded: {df_traffic is not None}
-Metrics loaded: {df_metrics is not None}
-S3 Endpoint: {S3_ENDPOINT}
-Storage working: Check if Garage is responding
-            """, language="python")
+        st.warning("En attente de données... Vérifiez la section 'Inspecter les Données Brutes' ci-dessus.")
 
-# --- Auto-refresh loop ---
-placeholder_status.empty()
-time.sleep(refresh_rate)
-st.rerun()
+    time.sleep(refresh)
+    st.rerun()
+
+if __name__ == "__main__":
+    main()
