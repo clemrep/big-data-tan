@@ -53,12 +53,14 @@ services:
     image: grosinosky/kafka:3.0.2
     depends_on:
       - zookeeper1
+    ports:
+      - "9095:9095"
     environment: # https://rmoff.net/2018/08/02/kafka-listeners-explained/
       KAFKA_BROKER_ID: 1
       KAFKA_CFG_ZOOKEEPER_CONNECT: zookeeper1:2181
       #KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_LISTENERS: INTERNAL://:9092,PROXY://0.0.0.0:9093,OUTSIDE://0.0.0.0:9095,PROXY_PASSTHROUGH://0.0.0.0:9096
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://:9092,PROXY://envoy1:9093,OUTSIDE://localhost:9095,PROXY_PASSTHROUGH://envoy1:9096
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka1:9092,PROXY://envoy1:9093,OUTSIDE://localhost:9095,PROXY_PASSTHROUGH://envoy1:9096
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,PROXY:PLAINTEXT,OUTSIDE:PLAINTEXT,PROXY_PASSTHROUGH:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       ALLOW_PLAINTEXT_LISTENER: "yes"
@@ -99,6 +101,27 @@ services:
       API_BASE_URL: "http://garage:3903"
       API_ADMIN_KEY: "changeme1234567890"
       S3_ENDPOINT_URL: "http://garage:3900"
+
+  dashboard:
+    image: python:3.12-slim
+    container_name: streamlit-dashboard
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+    working_dir: /app
+    environment:
+      - GARAGE_ENDPOINT=http://garage:3900
+      - ACCESS_KEY=${ACCESS_KEY}
+      - SECRET_KEY=${SECRET_KEY}
+      - BUCKET_NAME=${BUCKET_NAME:-datalake}
+    command: >
+      bash -c "pip install streamlit plotly boto3 pyarrow pandas python-dotenv --quiet &&
+               streamlit run dashboard/app.py --server.address=0.0.0.0 --server.port=8501"
+    depends_on:
+      - garage
+    restart: unless-stopped
+
 volumes:
   garage-meta:
     external: true  

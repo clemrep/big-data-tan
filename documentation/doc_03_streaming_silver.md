@@ -4,7 +4,6 @@
 
 Pipeline de transformation depuis Bronze vers deux destinations :
 - **Silver** : Données nettoyées et enrichies
-- **Silver_ML** : Données avec features pour le Machine Learning (directement depuis Bronze)
 
 ## Architecture
 
@@ -14,14 +13,11 @@ Pipeline de transformation depuis Bronze vers deux destinations :
                          │    │  (flights)      │
 ┌─────────────────┐      │    └─────────────────┘
 │  Bronze Layer   │ ─────┤
-│  (Delta Lake)   │      │    ┌─────────────────┐
-└─────────────────┘      └──► │  Silver_ML      │
-                              │  (flights_ml)   │
-                              │  + airports.csv │
-                              └─────────────────┘
+│  (Delta Lake)   │     
+└─────────────────┘      
 ```
 
-## Stream 1 : Bronze → Silver
+## Stream : Bronze → Silver
 
 ### Transformations
 - **Filtrage** : Suppression des vols sans `icao24` ou sans coordonnées GPS
@@ -35,13 +31,6 @@ event_timestamp, icao24, callsign, origin_country,
 longitude, latitude, velocity_kmh, altitude_meters,
 on_ground, category
 ```
-
-## Stream 2 : Bronze → Silver_ML
-
-### Jointure de données
-- **Source 1** : Bronze (données de vol)
-- **Source 2** : `airports.csv` (référentiel aéroports)
-- **Type** : Cross join + filtre distance minimum (avions au sol)
 
 ### Features temporelles (Window Functions)
 
@@ -78,8 +67,7 @@ on_ground, category
 
 1. **Configuration** - Charge les chemins et crée SparkSession
 2. **Aéroports** - Charge le référentiel `airports.csv`
-3. **Stream 1** - Lance Bronze → Silver
-4. **Stream 2** - Lance Bronze → Silver_ML (avec `foreachBatch`)
+3. **Stream ** - Lance Bronze → Silver
 
 ### Monitoring
 
@@ -87,11 +75,9 @@ La cellule de monitoring affiche le statut des deux streams toutes les 30 second
 
 ### Arrêter
 
-Exécuter la cellule d'arrêt : `query_silver.stop()` et `query_silver_ml.stop()`
+Exécuter la cellule d'arrêt : `query_silver.stop()`
 
 ## Points d'attention
 
 - **Ordre** : Exécuter APRÈS le notebook 02 (Bronze doit contenir des données)
-- **Checkpoints** : Deux checkpoints séparés (`silver_flights` et `silver_ml_flights`)
-- **foreachBatch** : Utilisé pour Silver_ML car les window functions nécessitent un traitement par batch
-- **Jointure aéroports** : Utilise `broadcast()` pour optimiser la performance
+- **Checkpoints** : Checkpoint (`silver_flights`)
