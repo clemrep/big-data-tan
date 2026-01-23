@@ -18,7 +18,7 @@ Ingestion des données brutes depuis Kafka vers la couche Bronze (Delta Lake).
 ### Lecture Kafka
 - **Format** : `kafka`
 - **Mode** : `readStream` (streaming continu)
-- **Offset** : `latest` (nouveaux messages uniquement)
+- **Offset** : `earliest` (reprend depuis le début)
 
 ### Parsing JSON
 - Définition d'un schéma strict (`StructType`)

@@ -50,7 +50,7 @@ Le projet utilise les technologies suivantes :
 - `04_exploration_sql.ipynb` : Analyse exploratoire des données en SQL.
 - `05_feature_engineering.ipynb` : Préparation des données pour le Machine Learning.
 - `06_classification_rf.ipynb` : Entraînement et évaluation du modèle Random Forest.
-- `07_streaming_gold.ipynb` : Agrégations finales et inférence ML en temps réel.
+- `07_streaming_gold.ipynb` : Agrégations temps réel sur les données Silver pour le dashboard.
 - `dashboard/` : Code source de l'application Streamlit.
 - `documentation/` : Guides détaillés pour chaque étape du pipeline.
 

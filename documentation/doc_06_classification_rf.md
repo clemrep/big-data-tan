@@ -7,11 +7,10 @@ Pipeline MLlib complet pour classifier les phases de vol avec un Random Forest.
 ## Architecture
 
 ```
-┌─────────────────┐     ┌─────────────────────┐     ┌─────────────────┐
-│  Silver_ML      │ ──► │   MLlib Pipeline    │ ──► │   Gold Layer    │
-│  (flights_ml)   │     │   Random Forest     │     │  models/        │
-└─────────────────┘     └─────────────────────┘     │  predictions/   │
-                                                     └─────────────────┘
+┌─────────────────┐     ┌─────────────────────┐
+│  Silver_ML      │ ──► │   MLlib Pipeline    │
+│  (flights_ml)   │     │   Random Forest     │
+└─────────────────┘     └─────────────────────┘     
 ```
 
 ## Pipeline MLlib
@@ -56,37 +55,13 @@ Pipeline MLlib complet pour classifier les phases de vol avec un Random Forest.
 5. **Entraînement** - `pipeline.fit(train_df)`
 6. **Évaluation** - Accuracy, F1, matrice de confusion
 7. **Feature importance** - Affiche les features les plus importantes
-8. **Sauvegarde** - Modèle et prédictions vers Gold
 
-### Métriques attendues
+### Métriques obtenues
 
-| Métrique | Cible |
-|----------|-------|
-| Accuracy | > 85% |
-| F1 Score | > 0.80 |
-
-## Sorties Gold
-
-```
-gold/
-├── models/
-│   └── rf_flight_phase/          # Pipeline sérialisé
-│       ├── metadata/
-│       └── stages/
-└── predictions/
-    └── flight_phase/             # Table Delta
-        ├── _delta_log/
-        └── *.parquet
-```
-
-## Réutiliser le modèle
-
-```python
-from pyspark.ml import PipelineModel
-
-model = PipelineModel.load("s3a://datalake/gold/models/rf_flight_phase")
-predictions = model.transform(new_data)
-```
+| Métrique | Valeur |
+|----------|--------|
+| Accuracy | 94.22% |
+| F1 Score | 0.9414 |
 
 ## Points d'attention
 

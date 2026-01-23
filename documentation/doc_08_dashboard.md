@@ -35,18 +35,20 @@ Le dashboard lit les agrégations Gold depuis MinIO/Garage :
 
 | Source | Chemin S3 | Fenêtre | Description |
 |--------|-----------|---------|-------------|
-| **Flight Phase Counts** | `s3a://datalake/gold/streaming_aggregations/flight_phase_counts/` | Tumbling 1 min | Comptage vols par phase |
-| **Anomaly Alerts** | `s3a://datalake/gold/streaming_aggregations/anomaly_alerts/` | Sliding 5 min | Détection anomalies par pays |
+| **Country Stats** | `s3a://datalake/gold/phase_stats/` | Tumbling 1 min | Statistiques par pays |
+| **Anomaly Alerts** | `s3a://datalake/gold/country_stats/` | Sliding 5 min | Détection anomalies par pays |
 
-### Schéma Flight Phase Counts
+### Schéma Country Stats
 
 ```
 window_start    : timestamp
 window_end      : timestamp
-flight_phase    : string (GROUND, TAKEOFF, CLIMB, CRUISE, DESCENT, TRANSITION)
+origin_country  : string
 flight_count    : long
 avg_altitude    : double
 avg_velocity    : double
+ground_count    : long
+airborne_count  : long
 ```
 
 ### Schéma Anomaly Alerts
@@ -81,27 +83,25 @@ Quatre métriques principales affichées en haut du dashboard :
 | ⚡ Vitesse Moyenne | Vitesse moyenne tous vols | `AVG(avg_velocity)` |
 | ⚠️ Taux Anomalies | Pourcentage d'observations anormales | `AVG(anomaly_rate)` |
 
-### 2. Distribution des Phases de Vol
+### 2. Statistiques par Pays
 
 **Graphiques :**
-- **Pie Chart** : Répartition en pourcentage par phase
-- **Bar Chart** : Nombre absolu de vols par phase
+- **Pie Chart** : Répartition en pourcentage par pays
+- **Bar Chart** : Nombre absolu de vols par pays
 
-**Phases trackées :**
-- `GROUND` : Avion au sol
-- `TAKEOFF` : Phase de décollage
-- `CLIMB` : Montée
-- `CRUISE` : Vol en croisière
-- `DESCENT` : Descente
-- `TRANSITION` : Changement de phase
+**Métriques par pays :**
+- Nombre d'observations (`flight_count`)
+- Avions au sol (`ground_count`)
+- Avions en vol (`airborne_count`)
+- Altitude et vitesse moyennes
 
 ### 3. Évolution Temporelle
 
-**Area Chart** empilé montrant l'évolution du nombre de vols par phase dans le temps.
+**Area Chart** empilé montrant l'évolution du nombre de vols par pays dans le temps.
 
 - Axe X : Timestamps des fenêtres
 - Axe Y : Nombre de vols
-- Couleurs : Par phase de vol
+- Couleurs : Par pays d'origine
 
 ### 4. Alertes d'Anomalies
 
@@ -216,11 +216,11 @@ python-dotenv>=1.0.0
 │  🛫 Vols    📏 Altitude    ⚡ Vitesse    ⚠️ Anomalies          │
 │  1,234      8,500 m        650 km/h     2.3%                   │
 ├────────────────────────────────────────────────────────────────┤
-│  📊 Distribution des Phases de Vol                             │
+│  📊 Statistiques par Pays                                      │
 │  ┌──────────────────┐  ┌──────────────────┐                    │
 │  │   [PIE CHART]    │  │   [BAR CHART]    │                    │
-│  │   CRUISE: 45%    │  │   █████ CRUISE   │                    │
-│  │   CLIMB: 20%     │  │   ███ CLIMB      │                    │
+│  │   USA: 35%       │  │   █████ USA      │                    │
+│  │   Germany: 15%   │  │   ███ Germany    │                    │
 │  │   ...            │  │   ...            │                    │
 │  └──────────────────┘  └──────────────────┘                    │
 ├────────────────────────────────────────────────────────────────┤
@@ -242,7 +242,8 @@ python-dotenv>=1.0.0
 3. S'assurer que les chemins Gold existent :
    ```bash
    # Via MinIO client ou Garage WebUI
-   mc ls minio/datalake/gold/streaming_aggregations/
+   mc ls minio/datalake/gold/phase_stats/
+   mc ls minio/datalake/gold/country_stats/
    ```
 
 ### Erreur de connexion S3

@@ -5,7 +5,7 @@ Ce dashboard affiche les agrégations streaming de la couche Gold:
 - Distribution des phases de vol (fenêtre tumbling 1 min)
 - Alertes d'anomalies par pays (fenêtre sliding 5 min)
 
-Données source: s3a://datalake/gold/streaming_aggregations/
+Données source: s3a://datalake/gold/
 """
 
 import os
@@ -83,7 +83,7 @@ def read_parquet_from_s3(path: str) -> pd.DataFrame:
     Lit les fichiers Parquet depuis S3/MinIO.
 
     Args:
-        path: Chemin S3 (ex: gold/streaming_aggregations/flight_phase_counts)
+        path: Chemin S3 (ex: gold/phase_stats)
 
     Returns:
         DataFrame pandas avec les données
@@ -130,7 +130,7 @@ def read_parquet_from_s3(path: str) -> pd.DataFrame:
 
 def load_flight_phase_data() -> pd.DataFrame:
     """Charge les données d'agrégation des phases de vol."""
-    df = read_parquet_from_s3("gold/streaming_aggregations/flight_phase_counts")
+    df = read_parquet_from_s3("gold/phase_stats")
 
     if not df.empty and 'window' in df.columns:
         # Extraire window_start et window_end si format struct
@@ -145,7 +145,7 @@ def load_flight_phase_data() -> pd.DataFrame:
 
 def load_anomaly_data() -> pd.DataFrame:
     """Charge les données d'alertes d'anomalies."""
-    df = read_parquet_from_s3("gold/streaming_aggregations/anomaly_alerts")
+    df = read_parquet_from_s3("gold/country_stats")
 
     if not df.empty and 'window' in df.columns:
         # Extraire window_start et window_end si format struct
